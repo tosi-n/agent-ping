@@ -103,3 +103,57 @@ docker run --rm -p 8091:8091 \
 
 - Build and publish Docker images via release workflow: `.github/workflows/release.yml`
 - Release and versioning process: `docs/RELEASE.md`
+
+## Testing
+
+### Running Tests
+
+```bash
+# All passing tests (unit tests + integration_lib + integration_ws)
+cargo test --tests --lib
+
+# Full test suite (when SQLite integration tests are fixed)
+cargo test --tests
+```
+
+### Current Coverage
+
+- **Total**: 18.86% (257/1363 lines)
+- **Excluded**: `src/bin/main.rs` (CLI boilerplate)
+
+Run `cargo tarpaulin --tests --lib --out Html` to generate coverage report.
+
+## TODO
+
+### Test Coverage (Target: 88%)
+
+The following tests need to be implemented/fixed to reach 88% coverage:
+
+#### SQLite Integration Tests
+- [ ] Fix SQLite connection issues in CI/temp directory environments
+  - Error: `SqliteError { code: 14, message: "unable to open database file" }`
+  - Root cause: `sqlx::AnyPool::connect()` timing with SQLite URLs
+
+#### Tests to Enable
+- [ ] `tests/integration/db.rs` - DB operations (15 tests)
+  - Covers: `src/db.rs` (199 lines)
+- [ ] `tests/integration/api.rs` - HTTP API endpoints (18 tests)
+  - Covers: `src/lib.rs` async functions
+
+#### Expected Impact
+
+| Module | Current | After Fix |
+|--------|---------|-----------|
+| db.rs | 8.5% | ~85% |
+| lib.rs async | 5.8% | ~75% |
+| **Total** | **18.86%** | **~55%+** |
+
+Enable tests by uncommenting in `Cargo.toml`:
+```toml
+# [[test]]
+# name = "integration_db"
+# path = "tests/integration/db.rs"
+# [[test]]
+# name = "integration_api"
+# path = "tests/integration/api.rs"
+```
