@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod channels;
 pub mod config;
 pub mod db;
@@ -8,14 +9,17 @@ pub mod ws;
 
 pub use config::Config;
 
-use self::channels::{slack as slack_channel, telegram as telegram_channel, whatsapp as whatsapp_channel};
+use self::channels::{
+    slack as slack_channel, telegram as telegram_channel, whatsapp as whatsapp_channel,
+};
 use self::config::{load_config, resolve_database_url};
 use self::db::DbKind;
 use self::types::{Attachment, InboundMessage, OutboundMessage, RouteInfo};
 
 use axum::{
-    extract::{Path, Query, State, WebSocketUpgrade},
-    http::{HeaderMap, StatusCode},
+    body::{Body, Bytes},
+    extract::{Path, Query, RawQuery, State, WebSocketUpgrade},
+    http::{HeaderMap, Method, StatusCode},
     middleware,
     response::IntoResponse,
     routing::{get, post},
@@ -95,9 +99,13 @@ pub async fn create_app() -> anyhow::Result<(AppState, Router)> {
     };
 
     let backend_cfg = config.backend.clone();
-    tokio::spawn(outbox::start_outbox_worker(pool.clone(), backend_cfg, db_kind));
+    tokio::spawn(outbox::start_outbox_worker(
+        pool.clone(),
+        backend_cfg,
+        db_kind,
+    ));
 
-    if config.channels.telegram.enabled {
+    if config.channels.telegram.enabled && channel_transport(&config, "telegram") == "native" {
         if let Some(token) = config.channels.telegram.bot_token.clone() {
             let (tx, mut rx) = mpsc::channel::<InboundMessage>(100);
             let interval = config.channels.telegram.poll_interval_seconds;
@@ -129,7 +137,15 @@ pub async fn create_app() -> anyhow::Result<(AppState, Router)> {
         .route("/v1/health", get(health))
         .route("/v1/status", get(status))
         .route(&config.channels.slack.webhook_path, post(slack_events))
-        .route(&config.channels.whatsapp.inbound_path, post(whatsapp_inbound));
+        .route(
+            &config.channels.telegram.webhook_path,
+            post(telegram_webhook),
+        )
+        .route(
+            &config.channels.whatsapp.inbound_path,
+            get(whatsapp_verify).post(whatsapp_inbound),
+        )
+        .route(&config.channels.teams.webhook_path, post(teams_webhook));
 
     let app = Router::new()
         .merge(authed_routes)
@@ -216,7 +232,10 @@ async fn send_message(
     }
 }
 
-async fn send_bulk(State(state): State<AppState>, Json(req): Json<BulkSendRequest>) -> impl IntoResponse {
+async fn send_bulk(
+    State(state): State<AppState>,
+    Json(req): Json<BulkSendRequest>,
+) -> impl IntoResponse {
     let mut results = Vec::new();
     for msg in req.messages {
         let attachments = msg.attachments.unwrap_or_default();
@@ -237,7 +256,10 @@ async fn send_bulk(State(state): State<AppState>, Json(req): Json<BulkSendReques
     Json(json!({"results": results}))
 }
 
-async fn list_sessions(State(state): State<AppState>, Query(page): Query<Pagination>) -> impl IntoResponse {
+async fn list_sessions(
+    State(state): State<AppState>,
+    Query(page): Query<Pagination>,
+) -> impl IntoResponse {
     let limit = page.limit.unwrap_or(100).min(500);
     let offset = page.offset.unwrap_or(0);
     let sessions = db::list_sessions(&state.pool, state.db_kind, limit, offset)
@@ -275,11 +297,29 @@ async fn list_messages(
 
 async fn slack_events(
     State(state): State<AppState>,
-    Json(payload): Json<serde_json::Value>,
-) -> impl IntoResponse {
+    method: Method,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+    body: Bytes,
+) -> axum::response::Response {
+    if channel_transport(&state.config, "slack") == "embedded" {
+        return embedded_channel_webhook(state, "slack", method, headers, query, body).await;
+    }
+
+    let payload = match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("invalid slack payload: {err}")})),
+            )
+                .into_response();
+        }
+    };
+
     if payload.get("type").and_then(|v| v.as_str()) == Some("url_verification") {
         if let Some(challenge) = payload.get("challenge").and_then(|v| v.as_str()) {
-            return Json(json!({"challenge": challenge}));
+            return Json(json!({"challenge": challenge})).into_response();
         }
     }
 
@@ -288,13 +328,67 @@ async fn slack_events(
             error!("slack inbound error: {err:?}");
         }
     }
-    Json(json!({"ok": true}))
+    Json(json!({"ok": true})).into_response()
+}
+
+async fn telegram_webhook(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+    body: Bytes,
+) -> axum::response::Response {
+    if channel_transport(&state.config, "telegram") == "embedded" {
+        return embedded_channel_webhook(state, "telegram", method, headers, query, body).await;
+    }
+
+    let payload = match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("invalid telegram payload: {err}")})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Some(inbound) = telegram_channel::parse_telegram_update(&payload) {
+        if let Err(err) = handle_inbound(state.clone(), inbound).await {
+            error!("telegram inbound error: {err:?}");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": err.to_string()})),
+            )
+                .into_response();
+        }
+    }
+
+    Json(json!({"status": "accepted"})).into_response()
 }
 
 async fn whatsapp_inbound(
     State(state): State<AppState>,
-    Json(payload): Json<whatsapp_channel::WhatsAppInboundPayload>,
-) -> impl IntoResponse {
+    method: Method,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+    body: Bytes,
+) -> axum::response::Response {
+    if channel_transport(&state.config, "whatsapp") == "embedded" {
+        return embedded_channel_webhook(state, "whatsapp", method, headers, query, body).await;
+    }
+
+    let payload = match serde_json::from_slice::<whatsapp_channel::WhatsAppInboundPayload>(&body) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("invalid whatsapp payload: {err}")})),
+            )
+                .into_response();
+        }
+    };
+
     let inbound = whatsapp_channel::normalize_whatsapp_inbound(payload);
     if let Err(err) = handle_inbound(state.clone(), inbound).await {
         error!("whatsapp inbound error: {err:?}");
@@ -305,6 +399,113 @@ async fn whatsapp_inbound(
             .into_response();
     }
     Json(json!({"status": "accepted"})).into_response()
+}
+
+async fn whatsapp_verify(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+) -> axum::response::Response {
+    if channel_transport(&state.config, "whatsapp") == "embedded" {
+        return embedded_channel_webhook(state, "whatsapp", method, headers, query, Bytes::new())
+            .await;
+    }
+
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(json!({"error": "whatsapp verification requires embedded transport"})),
+    )
+        .into_response()
+}
+
+async fn teams_webhook(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+    body: Bytes,
+) -> axum::response::Response {
+    if channel_transport(&state.config, "teams") == "embedded" {
+        return embedded_channel_webhook(state, "teams", method, headers, query, body).await;
+    }
+
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({"error": "teams webhook requires embedded transport"})),
+    )
+        .into_response()
+}
+
+async fn embedded_channel_webhook(
+    state: AppState,
+    channel: &str,
+    method: Method,
+    headers: HeaderMap,
+    query: Option<String>,
+    body: Bytes,
+) -> axum::response::Response {
+    let Some(runtime_url) = state.config.adapters.runtime_url.as_deref() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "embedded adapter runtime url not configured"})),
+        )
+            .into_response();
+    };
+
+    let path = channel_webhook_path(&state.config, channel);
+    let mut runtime_response = match adapters::runtime::ingest(
+        &state.http,
+        runtime_url,
+        channel,
+        method.as_str(),
+        path,
+        query.as_deref(),
+        &headers,
+        &body,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            error!("{channel} embedded inbound error: {err:?}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": err.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    let messages = std::mem::take(&mut runtime_response.messages);
+    for inbound in messages {
+        if let Err(err) = handle_inbound(state.clone(), inbound).await {
+            error!("{channel} inbound processing error: {err:?}");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": err.to_string()})),
+            )
+                .into_response();
+        }
+    }
+
+    runtime_response_into_response(runtime_response)
+}
+
+fn runtime_response_into_response(
+    response: adapters::runtime::RuntimeIngestResponse,
+) -> axum::response::Response {
+    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+    let mut reply = status.into_response();
+    *reply.body_mut() = Body::from(response.body);
+    if let Some(content_type) = response.content_type {
+        if let Ok(value) = content_type.parse() {
+            reply
+                .headers_mut()
+                .insert(axum::http::header::CONTENT_TYPE, value);
+        }
+    }
+    reply
 }
 
 async fn handle_inbound(state: AppState, mut inbound: InboundMessage) -> anyhow::Result<()> {
@@ -323,7 +524,9 @@ async fn handle_inbound(state: AppState, mut inbound: InboundMessage) -> anyhow:
         inbound.account_id.as_deref(),
         Some(&inbound.peer_id),
     );
-    let agent_id = binding.agent_id.or(Some(state.config.session.agent_id.clone()));
+    let agent_id = binding
+        .agent_id
+        .or(Some(state.config.session.agent_id.clone()));
 
     let last_route = serde_json::json!({
         "channel": inbound.channel,
@@ -393,6 +596,7 @@ async fn handle_inbound(state: AppState, mut inbound: InboundMessage) -> anyhow:
         "inbound_id": inbound.inbound_id,
         "session_key": session_key,
         "channel": inbound.channel,
+        "account_id": inbound.account_id,
         "peer_id": inbound.peer_id,
         "peer_kind": inbound.peer_kind,
         "thread_id": inbound.thread_id,
@@ -489,6 +693,17 @@ async fn send_via_channel(
     route: &RouteInfo,
     outbound: &OutboundMessage,
 ) -> anyhow::Result<()> {
+    if channel_transport(&state.config, &route.channel) == "embedded" {
+        let runtime_url = state
+            .config
+            .adapters
+            .runtime_url
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("embedded adapter runtime url missing"))?;
+        adapters::runtime::send(&state.http, runtime_url, &route.channel, route, outbound).await?;
+        return Ok(());
+    }
+
     match route.channel.as_str() {
         "slack" => {
             let token = state
@@ -635,6 +850,26 @@ async fn upload_media(
     out
 }
 
+fn channel_transport<'a>(config: &'a Config, channel: &str) -> &'a str {
+    match channel {
+        "slack" => config.channels.slack.transport.as_str(),
+        "telegram" => config.channels.telegram.transport.as_str(),
+        "whatsapp" => config.channels.whatsapp.transport.as_str(),
+        "teams" => config.channels.teams.transport.as_str(),
+        _ => "native",
+    }
+}
+
+fn channel_webhook_path<'a>(config: &'a Config, channel: &str) -> &'a str {
+    match channel {
+        "slack" => config.channels.slack.webhook_path.as_str(),
+        "telegram" => config.channels.telegram.webhook_path.as_str(),
+        "whatsapp" => config.channels.whatsapp.inbound_path.as_str(),
+        "teams" => config.channels.teams.webhook_path.as_str(),
+        _ => "/",
+    }
+}
+
 #[derive(Clone)]
 struct BindingMatch {
     business_profile_id: Option<String>,
@@ -695,7 +930,6 @@ fn resolve_binding(
 mod tests {
     use super::*;
     use crate::config::Binding;
-    use std::collections::HashMap;
 
     #[test]
     fn test_resolve_binding_no_match() {
@@ -802,7 +1036,10 @@ mod tests {
 
     #[test]
     fn test_pagination_limit_offset() {
-        let p = Pagination { limit: Some(10), offset: Some(20) };
+        let p = Pagination {
+            limit: Some(10),
+            offset: Some(20),
+        };
         assert_eq!(p.limit.unwrap(), 10);
         assert_eq!(p.offset.unwrap(), 20);
     }
@@ -877,16 +1114,26 @@ mod tests {
 
     #[test]
     fn test_health_response_variants() {
-        let ok = HealthResponse { status: "ok".to_string() };
-        let degraded = HealthResponse { status: "degraded".to_string() };
+        let ok = HealthResponse {
+            status: "ok".to_string(),
+        };
+        let degraded = HealthResponse {
+            status: "degraded".to_string(),
+        };
         assert_eq!(ok.status, "ok");
         assert_eq!(degraded.status, "degraded");
     }
 
     #[test]
     fn test_status_response_counts() {
-        let empty = StatusResponse { sessions: 0, messages: 0 };
-        let populated = StatusResponse { sessions: 1000, messages: 5000 };
+        let empty = StatusResponse {
+            sessions: 0,
+            messages: 0,
+        };
+        let populated = StatusResponse {
+            sessions: 1000,
+            messages: 5000,
+        };
         assert_eq!(empty.sessions, 0);
         assert_eq!(populated.sessions, 1000);
     }
@@ -934,13 +1181,18 @@ mod tests {
                 reply_to: None,
             },
         ];
-        let req = BulkSendRequest { messages: messages.clone() };
+        let req = BulkSendRequest {
+            messages: messages.clone(),
+        };
         assert_eq!(req.messages.len(), 2);
     }
 
     #[test]
     fn test_pagination_defaults() {
-        let p = Pagination { limit: None, offset: None };
+        let p = Pagination {
+            limit: None,
+            offset: None,
+        };
         assert!(p.limit.is_none());
         assert!(p.offset.is_none());
     }

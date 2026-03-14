@@ -1,6 +1,6 @@
 use agent_ping::config::{
-    AuthConfig, BackendConfig, Binding, ChannelsConfig, Config, DatabaseConfig, QueueConfig,
-    ServerConfig, SessionConfig, SlackConfig, TelegramConfig, WhatsAppConfig,
+    BackendConfig, Binding, ChannelsConfig, Config, QueueConfig, ServerConfig, SessionConfig,
+    TelegramConfig, WhatsAppConfig,
 };
 use agent_ping::db::DbKind;
 use agent_ping::types::{Attachment, InboundMessage, OutboundMessage, RouteInfo};
@@ -455,6 +455,8 @@ fn test_config_telegram_enabled() {
             telegram: TelegramConfig {
                 enabled: true,
                 bot_token: Some("bot_token_123".to_string()),
+                transport: "native".to_string(),
+                webhook_path: "/v1/channels/telegram/webhook".to_string(),
                 poll_interval_seconds: 5,
             },
             ..ChannelsConfig::default()
@@ -477,6 +479,7 @@ fn test_config_whatsapp_enabled() {
             whatsapp: WhatsAppConfig {
                 enabled: true,
                 sidecar_url: "http://whatsapp:4040".to_string(),
+                transport: "native".to_string(),
                 inbound_path: "/v1/whatsapp".to_string(),
             },
             ..ChannelsConfig::default()

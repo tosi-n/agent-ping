@@ -10,6 +10,7 @@ pub struct Config {
     pub auth: AuthConfig,
     pub database: DatabaseConfig,
     pub backend: BackendConfig,
+    pub adapters: AdapterRuntimeConfig,
     pub session: SessionConfig,
     pub queue: QueueConfig,
     pub channels: ChannelsConfig,
@@ -60,6 +61,17 @@ impl Default for BackendConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterRuntimeConfig {
+    pub runtime_url: Option<String>,
+}
+
+impl Default for AdapterRuntimeConfig {
+    fn default() -> Self {
+        Self { runtime_url: None }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub agent_id: String,
     pub dm_scope: String,
@@ -102,6 +114,7 @@ pub struct ChannelsConfig {
     pub slack: SlackConfig,
     pub telegram: TelegramConfig,
     pub whatsapp: WhatsAppConfig,
+    pub teams: TeamsConfig,
 }
 
 impl Default for ChannelsConfig {
@@ -110,6 +123,7 @@ impl Default for ChannelsConfig {
             slack: SlackConfig::default(),
             telegram: TelegramConfig::default(),
             whatsapp: WhatsAppConfig::default(),
+            teams: TeamsConfig::default(),
         }
     }
 }
@@ -121,6 +135,7 @@ pub struct SlackConfig {
     pub signing_secret: Option<String>,
     pub app_token: Option<String>,
     pub mode: String,
+    pub transport: String,
     pub webhook_path: String,
 }
 
@@ -132,6 +147,7 @@ impl Default for SlackConfig {
             signing_secret: None,
             app_token: None,
             mode: "http".to_string(),
+            transport: "native".to_string(),
             webhook_path: "/v1/channels/slack/events".to_string(),
         }
     }
@@ -141,6 +157,8 @@ impl Default for SlackConfig {
 pub struct TelegramConfig {
     pub enabled: bool,
     pub bot_token: Option<String>,
+    pub transport: String,
+    pub webhook_path: String,
     pub poll_interval_seconds: u64,
 }
 
@@ -149,6 +167,8 @@ impl Default for TelegramConfig {
         Self {
             enabled: false,
             bot_token: None,
+            transport: "native".to_string(),
+            webhook_path: "/v1/channels/telegram/webhook".to_string(),
             poll_interval_seconds: 2,
         }
     }
@@ -158,6 +178,7 @@ impl Default for TelegramConfig {
 pub struct WhatsAppConfig {
     pub enabled: bool,
     pub sidecar_url: String,
+    pub transport: String,
     pub inbound_path: String,
 }
 
@@ -166,7 +187,25 @@ impl Default for WhatsAppConfig {
         Self {
             enabled: false,
             sidecar_url: "http://127.0.0.1:4040".to_string(),
+            transport: "native".to_string(),
             inbound_path: "/v1/channels/whatsapp/inbound".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamsConfig {
+    pub enabled: bool,
+    pub transport: String,
+    pub webhook_path: String,
+}
+
+impl Default for TeamsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            transport: "native".to_string(),
+            webhook_path: "/v1/channels/teams/webhook".to_string(),
         }
     }
 }
@@ -206,6 +245,7 @@ impl Default for Config {
                 url: None,
                 sqlite_path: "~/.agent-ping/state.sqlite".to_string(),
             },
+            adapters: AdapterRuntimeConfig { runtime_url: None },
             backend: BackendConfig {
                 webhook_url: None,
                 media_upload_url: None,
@@ -230,17 +270,26 @@ impl Default for Config {
                     signing_secret: None,
                     app_token: None,
                     mode: "http".to_string(),
+                    transport: "native".to_string(),
                     webhook_path: "/v1/channels/slack/events".to_string(),
                 },
                 telegram: TelegramConfig {
                     enabled: false,
                     bot_token: None,
+                    transport: "native".to_string(),
+                    webhook_path: "/v1/channels/telegram/webhook".to_string(),
                     poll_interval_seconds: 2,
                 },
                 whatsapp: WhatsAppConfig {
                     enabled: false,
                     sidecar_url: "http://127.0.0.1:4040".to_string(),
+                    transport: "native".to_string(),
                     inbound_path: "/v1/channels/whatsapp/inbound".to_string(),
+                },
+                teams: TeamsConfig {
+                    enabled: false,
+                    transport: "native".to_string(),
+                    webhook_path: "/v1/channels/teams/webhook".to_string(),
                 },
             },
             bindings: Vec::new(),
@@ -307,6 +356,59 @@ pub fn load_config() -> Config {
     if let Ok(token) = env::var("AGENT_PING_BACKEND_TOKEN") {
         if !token.trim().is_empty() {
             cfg.backend.api_token = Some(token);
+        }
+    }
+
+    if let Ok(url) = env::var("AGENT_PING_ADAPTER_RUNTIME_URL") {
+        if !url.trim().is_empty() {
+            cfg.adapters.runtime_url = Some(url);
+        }
+    }
+
+    if let Ok(value) = env::var("AGENT_PING_CHANNEL_SLACK_TRANSPORT") {
+        if !value.trim().is_empty() {
+            cfg.channels.slack.transport = value;
+        }
+    }
+    if let Ok(value) = env::var("AGENT_PING_CHANNEL_SLACK_MODE") {
+        let trimmed = value.trim();
+        if matches!(trimmed, "native" | "embedded") {
+            cfg.channels.slack.transport = trimmed.to_string();
+        } else if !trimmed.is_empty() {
+            cfg.channels.slack.mode = trimmed.to_string();
+        }
+    }
+
+    if let Ok(value) = env::var("AGENT_PING_CHANNEL_TELEGRAM_TRANSPORT") {
+        if !value.trim().is_empty() {
+            cfg.channels.telegram.transport = value;
+        }
+    }
+    if let Ok(value) = env::var("AGENT_PING_CHANNEL_TELEGRAM_MODE") {
+        if !value.trim().is_empty() {
+            cfg.channels.telegram.transport = value;
+        }
+    }
+
+    if let Ok(value) = env::var("AGENT_PING_CHANNEL_WHATSAPP_TRANSPORT") {
+        if !value.trim().is_empty() {
+            cfg.channels.whatsapp.transport = value;
+        }
+    }
+    if let Ok(value) = env::var("AGENT_PING_CHANNEL_WHATSAPP_MODE") {
+        if !value.trim().is_empty() {
+            cfg.channels.whatsapp.transport = value;
+        }
+    }
+
+    if let Ok(value) = env::var("AGENT_PING_CHANNEL_TEAMS_TRANSPORT") {
+        if !value.trim().is_empty() {
+            cfg.channels.teams.transport = value;
+        }
+    }
+    if let Ok(value) = env::var("AGENT_PING_CHANNEL_TEAMS_MODE") {
+        if !value.trim().is_empty() {
+            cfg.channels.teams.transport = value;
         }
     }
 
@@ -428,6 +530,7 @@ mod tests {
         assert!(!channels.slack.enabled);
         assert!(!channels.telegram.enabled);
         assert!(!channels.whatsapp.enabled);
+        assert!(!channels.teams.enabled);
         assert_eq!(channels.whatsapp.sidecar_url, "http://127.0.0.1:4040");
     }
 
@@ -460,6 +563,7 @@ mod tests {
         let slack = SlackConfig::default();
         assert!(!slack.enabled);
         assert!(slack.bot_token.is_none());
+        assert_eq!(slack.transport, "native");
         assert_eq!(slack.webhook_path, "/v1/channels/slack/events");
     }
 
@@ -468,6 +572,8 @@ mod tests {
         let tg = TelegramConfig::default();
         assert!(!tg.enabled);
         assert!(tg.bot_token.is_none());
+        assert_eq!(tg.transport, "native");
+        assert_eq!(tg.webhook_path, "/v1/channels/telegram/webhook");
         assert_eq!(tg.poll_interval_seconds, 2);
     }
 
@@ -476,7 +582,16 @@ mod tests {
         let wa = WhatsAppConfig::default();
         assert!(!wa.enabled);
         assert_eq!(wa.sidecar_url, "http://127.0.0.1:4040");
+        assert_eq!(wa.transport, "native");
         assert_eq!(wa.inbound_path, "/v1/channels/whatsapp/inbound");
+    }
+
+    #[test]
+    fn test_teams_config_default() {
+        let teams = TeamsConfig::default();
+        assert!(!teams.enabled);
+        assert_eq!(teams.transport, "native");
+        assert_eq!(teams.webhook_path, "/v1/channels/teams/webhook");
     }
 
     #[test]

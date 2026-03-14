@@ -1,7 +1,4 @@
-use agent_ping::config::{
-    expand_tilde, load_config, resolve_config_path, resolve_database_url, Config,
-};
-use std::collections::HashMap;
+use agent_ping::config::{expand_tilde, resolve_config_path, resolve_database_url, Config};
 
 #[test]
 fn test_default_config() {
@@ -14,6 +11,7 @@ fn test_default_config() {
     assert!(!cfg.channels.slack.enabled);
     assert!(!cfg.channels.telegram.enabled);
     assert!(!cfg.channels.whatsapp.enabled);
+    assert!(!cfg.channels.teams.enabled);
     assert!(cfg.auth.token.is_none());
     assert_eq!(cfg.queue.debounce_ms, 1000);
     assert_eq!(cfg.queue.cap, 20);
@@ -62,17 +60,31 @@ fn test_default_channels_config() {
     let cfg = Config::default();
     assert!(!cfg.channels.slack.enabled);
     assert!(cfg.channels.slack.bot_token.is_none());
+    assert_eq!(cfg.channels.slack.transport, "native");
     assert_eq!(cfg.channels.slack.webhook_path, "/v1/channels/slack/events");
 
     assert!(!cfg.channels.telegram.enabled);
     assert!(cfg.channels.telegram.bot_token.is_none());
+    assert_eq!(cfg.channels.telegram.transport, "native");
+    assert_eq!(
+        cfg.channels.telegram.webhook_path,
+        "/v1/channels/telegram/webhook"
+    );
     assert_eq!(cfg.channels.telegram.poll_interval_seconds, 2);
 
     assert!(!cfg.channels.whatsapp.enabled);
     assert_eq!(cfg.channels.whatsapp.sidecar_url, "http://127.0.0.1:4040");
+    assert_eq!(cfg.channels.whatsapp.transport, "native");
     assert_eq!(
         cfg.channels.whatsapp.inbound_path,
         "/v1/channels/whatsapp/inbound"
+    );
+
+    assert!(!cfg.channels.teams.enabled);
+    assert_eq!(cfg.channels.teams.transport, "native");
+    assert_eq!(
+        cfg.channels.teams.webhook_path,
+        "/v1/channels/teams/webhook"
     );
 }
 
