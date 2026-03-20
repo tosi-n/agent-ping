@@ -365,6 +365,41 @@ pub fn load_config() -> Config {
         }
     }
 
+    if let Ok(value) = env::var("AGENT_PING_SESSION_AGENT_ID") {
+        if !value.trim().is_empty() {
+            cfg.session.agent_id = value;
+        }
+    }
+
+    if let Ok(value) = env::var("AGENT_PING_SESSION_DM_SCOPE") {
+        if !value.trim().is_empty() {
+            cfg.session.dm_scope = value;
+        }
+    }
+
+    if let Ok(value) = env::var("AGENT_PING_SESSION_MAIN_KEY") {
+        if !value.trim().is_empty() {
+            cfg.session.main_key = value;
+        }
+    }
+
+    if let Ok(value) = env::var("AGENT_PING_IDENTITY_LINKS_JSON") {
+        if let Some(identity_links) =
+            parse_json_env::<HashMap<String, Vec<String>>>(&value, "AGENT_PING_IDENTITY_LINKS_JSON")
+        {
+            cfg.session.identity_links = identity_links;
+        }
+    }
+
+    if let Ok(value) = env::var("AGENT_PING_BINDINGS_JSON") {
+        if let Some(bindings) = parse_json_env::<Vec<Binding>>(&value, "AGENT_PING_BINDINGS_JSON") {
+            cfg.bindings = bindings
+                .into_iter()
+                .filter_map(normalize_binding)
+                .collect();
+        }
+    }
+
     if let Ok(value) = env::var("AGENT_PING_CHANNEL_SLACK_TRANSPORT") {
         if !value.trim().is_empty() {
             cfg.channels.slack.transport = value;
@@ -413,6 +448,54 @@ pub fn load_config() -> Config {
     }
 
     cfg
+}
+
+fn parse_json_env<T>(raw: &str, env_name: &str) -> Option<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    match serde_json::from_str::<T>(trimmed) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            eprintln!("WARN: invalid {env_name}: {err}");
+            None
+        }
+    }
+}
+
+fn normalize_binding(mut binding: Binding) -> Option<Binding> {
+    binding.channel = binding.channel.trim().to_lowercase();
+    binding.account_id = binding
+        .account_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    binding.peer_id = binding
+        .peer_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    binding.business_profile_id = binding
+        .business_profile_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    binding.user_id = binding
+        .user_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    binding.agent_id = binding
+        .agent_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if binding.channel.is_empty() {
+        return None;
+    }
+
+    Some(binding)
 }
 
 pub fn resolve_config_path() -> PathBuf {
@@ -603,5 +686,63 @@ mod tests {
         assert!(binding.business_profile_id.is_none());
         assert!(binding.user_id.is_none());
         assert!(binding.agent_id.is_none());
+    }
+
+    #[test]
+    fn test_load_config_env_identity_links_json() {
+        std::env::set_var(
+            "AGENT_PING_IDENTITY_LINKS_JSON",
+            r#"{"company":["slack:acme-team","telegram:acme-bot"],"owner":["whatsapp:+447700900123"]}"#,
+        );
+
+        let cfg = load_config();
+        assert_eq!(
+            cfg.session.identity_links.get("company"),
+            Some(&vec!["slack:acme-team".to_string(), "telegram:acme-bot".to_string()])
+        );
+        assert_eq!(
+            cfg.session.identity_links.get("owner"),
+            Some(&vec!["whatsapp:+447700900123".to_string()])
+        );
+
+        std::env::remove_var("AGENT_PING_IDENTITY_LINKS_JSON");
+    }
+
+    #[test]
+    fn test_load_config_env_bindings_json() {
+        std::env::set_var(
+            "AGENT_PING_BINDINGS_JSON",
+            r#"[{"channel":" Slack ","account_id":" T123 ","peer_id":" C456 ","business_profile_id":" bp_123 ","user_id":"","agent_id":" finance_main "},{"channel":"telegram","peer_id":"bot-chat","business_profile_id":"bp_456"}]"#,
+        );
+
+        let cfg = load_config();
+        assert_eq!(cfg.bindings.len(), 2);
+        assert_eq!(cfg.bindings[0].channel, "slack");
+        assert_eq!(cfg.bindings[0].account_id.as_deref(), Some("T123"));
+        assert_eq!(cfg.bindings[0].peer_id.as_deref(), Some("C456"));
+        assert_eq!(cfg.bindings[0].business_profile_id.as_deref(), Some("bp_123"));
+        assert!(cfg.bindings[0].user_id.is_none());
+        assert_eq!(cfg.bindings[0].agent_id.as_deref(), Some("finance_main"));
+        assert_eq!(cfg.bindings[1].channel, "telegram");
+        assert_eq!(cfg.bindings[1].peer_id.as_deref(), Some("bot-chat"));
+        assert_eq!(cfg.bindings[1].business_profile_id.as_deref(), Some("bp_456"));
+
+        std::env::remove_var("AGENT_PING_BINDINGS_JSON");
+    }
+
+    #[test]
+    fn test_load_config_env_session_overrides() {
+        std::env::set_var("AGENT_PING_SESSION_AGENT_ID", "ops_router");
+        std::env::set_var("AGENT_PING_SESSION_DM_SCOPE", "per-channel-peer");
+        std::env::set_var("AGENT_PING_SESSION_MAIN_KEY", "mainline");
+
+        let cfg = load_config();
+        assert_eq!(cfg.session.agent_id, "ops_router");
+        assert_eq!(cfg.session.dm_scope, "per-channel-peer");
+        assert_eq!(cfg.session.main_key, "mainline");
+
+        std::env::remove_var("AGENT_PING_SESSION_AGENT_ID");
+        std::env::remove_var("AGENT_PING_SESSION_DM_SCOPE");
+        std::env::remove_var("AGENT_PING_SESSION_MAIN_KEY");
     }
 }

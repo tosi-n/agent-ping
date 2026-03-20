@@ -4,4 +4,5 @@
 *.profdata
 *.html
 *.json
+!agent-ping.example.json
 .DS_Store

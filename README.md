@@ -5,6 +5,7 @@
 It handles:
 - channel ingress/egress (Slack, Telegram, WhatsApp sidecar),
 - session key routing,
+- business/user/agent binding resolution,
 - queueing and reliable inbound webhook delivery,
 - media handoff to backend storage,
 - control-plane websocket monitoring.
@@ -36,6 +37,100 @@ Example file:
 - `AGENT_PING_BACKEND_WEBHOOK_URL`
 - `AGENT_PING_BACKEND_MEDIA_UPLOAD_URL`
 - `AGENT_PING_BACKEND_TOKEN`
+- `AGENT_PING_ADAPTER_RUNTIME_URL`
+- `AGENT_PING_SESSION_AGENT_ID`
+- `AGENT_PING_SESSION_DM_SCOPE`
+- `AGENT_PING_SESSION_MAIN_KEY`
+- `AGENT_PING_IDENTITY_LINKS_JSON`
+- `AGENT_PING_BINDINGS_JSON`
+- `AGENT_PING_CHANNEL_SLACK_TRANSPORT`
+- `AGENT_PING_CHANNEL_TELEGRAM_TRANSPORT`
+- `AGENT_PING_CHANNEL_WHATSAPP_TRANSPORT`
+- `AGENT_PING_CHANNEL_TEAMS_TRANSPORT`
+
+## Business Routing
+
+Provider credentials only make channel adapters live. They do not tell `agent-ping` which
+business owns an inbound conversation.
+
+Use `AGENT_PING_BINDINGS_JSON` to map inbound routes onto Stimulir business profiles, users,
+and agent lanes. Matching is by:
+
+- `channel` only
+- `channel + account_id`
+- `channel + peer_id`
+- `channel + account_id + peer_id`
+
+`agent-ping` picks the most specific match.
+
+Example:
+
+```bash
+export AGENT_PING_BINDINGS_JSON='[
+  {
+    "channel": "slack",
+    "account_id": "T03ACME",
+    "business_profile_id": "bp_acme",
+    "agent_id": "ops_router"
+  },
+  {
+    "channel": "slack",
+    "account_id": "T03ACME",
+    "peer_id": "C091FINANCE",
+    "business_profile_id": "bp_acme",
+    "agent_id": "finance_main"
+  },
+  {
+    "channel": "telegram",
+    "peer_id": "123456789",
+    "business_profile_id": "bp_acme"
+  },
+  {
+    "channel": "whatsapp",
+    "peer_id": "447700900123",
+    "business_profile_id": "bp_acme"
+  }
+]'
+```
+
+Notes:
+
+- `business_profile_id` is the Stimulir business profile id that should own the session.
+- `user_id` is optional and can attach the session directly to a known user.
+- `agent_id` is optional and selects the target agent lane for that route.
+- `account_id` is usually the provider workspace/tenant/workspace-equivalent id.
+- `peer_id` is usually the Slack channel/user id, Telegram chat id, WhatsApp phone/contact id,
+  or Teams conversation id.
+
+## Session Shape
+
+Direct-message session behavior is controlled by:
+
+- `AGENT_PING_SESSION_AGENT_ID`
+- `AGENT_PING_SESSION_DM_SCOPE`
+- `AGENT_PING_SESSION_MAIN_KEY`
+- `AGENT_PING_IDENTITY_LINKS_JSON`
+
+`AGENT_PING_SESSION_DM_SCOPE` supports:
+
+- `main`
+- `per-peer`
+- `per-channel-peer`
+- `per-account-channel-peer`
+
+Example:
+
+```bash
+export AGENT_PING_SESSION_AGENT_ID=ops_router
+export AGENT_PING_SESSION_DM_SCOPE=per-channel-peer
+export AGENT_PING_SESSION_MAIN_KEY=main
+export AGENT_PING_IDENTITY_LINKS_JSON='{
+  "acme-owner": ["slack:U02ACME", "telegram:123456789", "whatsapp:447700900123"]
+}'
+```
+
+This lets the same person keep a stable DM session identity across multiple channels when you
+need it.
 
 ## HTTP API
 

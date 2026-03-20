@@ -1,0 +1,93 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8091
+  },
+  "auth": {
+    "token": "agent-ping-dev-token"
+  },
+  "database": {
+    "url": "sqlite:///tmp/agent-ping.sqlite",
+    "sqlite_path": "/tmp/agent-ping.sqlite"
+  },
+  "backend": {
+    "webhook_url": "http://backend:8000/api/v1/agent-ping/inbound",
+    "media_upload_url": "http://backend:8000/api/v1/agent-ping/media/upload",
+    "api_token": "agent-ping-dev-token"
+  },
+  "adapters": {
+    "runtime_url": "http://127.0.0.1:8092"
+  },
+  "session": {
+    "agent_id": "ops_router",
+    "dm_scope": "per-channel-peer",
+    "main_key": "main",
+    "identity_links": {
+      "acme-owner": [
+        "slack:U02ACME",
+        "telegram:123456789",
+        "whatsapp:447700900123"
+      ]
+    }
+  },
+  "queue": {
+    "mode": "collect",
+    "debounce_ms": 1000,
+    "cap": 20,
+    "drop": "summarize"
+  },
+  "channels": {
+    "slack": {
+      "enabled": true,
+      "bot_token": null,
+      "signing_secret": null,
+      "app_token": null,
+      "mode": "http",
+      "transport": "embedded",
+      "webhook_path": "/v1/channels/slack/events"
+    },
+    "telegram": {
+      "enabled": true,
+      "bot_token": null,
+      "transport": "embedded",
+      "webhook_path": "/v1/channels/telegram/webhook",
+      "poll_interval_seconds": 2
+    },
+    "whatsapp": {
+      "enabled": true,
+      "sidecar_url": "http://127.0.0.1:4040",
+      "transport": "embedded",
+      "inbound_path": "/v1/channels/whatsapp/inbound"
+    },
+    "teams": {
+      "enabled": true,
+      "transport": "embedded",
+      "webhook_path": "/v1/channels/teams/webhook"
+    }
+  },
+  "bindings": [
+    {
+      "channel": "slack",
+      "account_id": "T03ACME",
+      "business_profile_id": "bp_acme",
+      "agent_id": "ops_router"
+    },
+    {
+      "channel": "slack",
+      "account_id": "T03ACME",
+      "peer_id": "C091FINANCE",
+      "business_profile_id": "bp_acme",
+      "agent_id": "finance_main"
+    },
+    {
+      "channel": "telegram",
+      "peer_id": "123456789",
+      "business_profile_id": "bp_acme"
+    },
+    {
+      "channel": "whatsapp",
+      "peer_id": "447700900123",
+      "business_profile_id": "bp_acme"
+    }
+  ]
+}
