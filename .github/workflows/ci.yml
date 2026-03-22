@@ -47,7 +47,9 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          COVERAGE=$(cargo tarpaulin --tests --out Json | jq -r '.metrics.total_covered_percent')
+          mkdir -p ./coverage/json
+          cargo tarpaulin --tests --out Json --output-dir ./coverage/json -- --test-threads=1 >/dev/null
+          COVERAGE=$(jq -r '.metrics.total_covered_percent' ./coverage/json/tarpaulin-report.json)
           echo "Coverage: $COVERAGE%"
           THRESHOLD=15
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
