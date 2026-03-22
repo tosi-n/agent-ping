@@ -2,7 +2,7 @@ use crate::types::{Attachment, InboundMessage, OutboundMessage, RouteInfo};
 
 use anyhow::Context;
 use axum::http::HeaderMap;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]
 struct RuntimeHeader {
@@ -121,6 +121,69 @@ pub async fn send(
         .json::<RuntimeSendResponse>()
         .await
         .with_context(|| format!("invalid embedded adapter send response for {channel}"))
+}
+
+pub async fn get_json<T>(
+    client: &reqwest::Client,
+    runtime_url: &str,
+    path: &str,
+) -> anyhow::Result<T>
+where
+    T: DeserializeOwned,
+{
+    let response = client
+        .get(format!(
+            "{}{}",
+            runtime_url.trim_end_matches('/'),
+            path
+        ))
+        .send()
+        .await
+        .with_context(|| format!("failed to call embedded adapter GET {path}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("embedded adapter GET failed for {path}: {status} {body}");
+    }
+
+    response
+        .json::<T>()
+        .await
+        .with_context(|| format!("invalid embedded adapter GET response for {path}"))
+}
+
+pub async fn post_json<B, T>(
+    client: &reqwest::Client,
+    runtime_url: &str,
+    path: &str,
+    body: &B,
+) -> anyhow::Result<T>
+where
+    B: Serialize + ?Sized,
+    T: DeserializeOwned,
+{
+    let response = client
+        .post(format!(
+            "{}{}",
+            runtime_url.trim_end_matches('/'),
+            path
+        ))
+        .json(body)
+        .send()
+        .await
+        .with_context(|| format!("failed to call embedded adapter POST {path}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("embedded adapter POST failed for {path}: {status} {body}");
+    }
+
+    response
+        .json::<T>()
+        .await
+        .with_context(|| format!("invalid embedded adapter POST response for {path}"))
 }
 
 fn headers_to_vec(headers: &HeaderMap) -> Vec<RuntimeHeader> {

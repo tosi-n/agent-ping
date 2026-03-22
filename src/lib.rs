@@ -63,6 +63,11 @@ pub struct BulkSendRequest {
     pub messages: Vec<SendMessageRequest>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChannelLinkRequest {
+    pub force: Option<bool>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: String,
@@ -129,6 +134,10 @@ pub async fn create_app() -> anyhow::Result<(AppState, Router)> {
         .route("/v1/sessions", get(list_sessions))
         .route("/v1/sessions/:session_key", get(get_session))
         .route("/v1/sessions/:session_key/messages", get(list_messages))
+        .route("/v1/runtime/inbound", post(runtime_inbound))
+        .route("/v1/channels/whatsapp/status", get(whatsapp_channel_status))
+        .route("/v1/channels/whatsapp/link", post(whatsapp_channel_link))
+        .route("/v1/channels/whatsapp/logout", post(whatsapp_channel_logout))
         .route("/v1/inbound/ack", post(inbound_ack))
         .route("/v1/ws", get(ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
@@ -198,6 +207,69 @@ async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl
 
 async fn inbound_ack() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({"status": "ok"})))
+}
+
+async fn runtime_inbound(
+    State(state): State<AppState>,
+    Json(inbound): Json<InboundMessage>,
+) -> impl IntoResponse {
+    match handle_inbound(state.clone(), inbound).await {
+        Ok(()) => Json(json!({"status": "accepted"})).into_response(),
+        Err(err) => {
+            error!("runtime_inbound error: {err:?}");
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": err.to_string()})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn whatsapp_channel_status(State(state): State<AppState>) -> impl IntoResponse {
+    match runtime_value(&state, "/internal/whatsapp/status").await {
+        Ok(value) => Json(value).into_response(),
+        Err(err) => {
+            error!("whatsapp_channel_status error: {err:?}");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": err.to_string()})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn whatsapp_channel_link(
+    State(state): State<AppState>,
+    Json(req): Json<ChannelLinkRequest>,
+) -> impl IntoResponse {
+    let payload = json!({ "force": req.force.unwrap_or(false) });
+    match runtime_post_value(&state, "/internal/whatsapp/link", &payload).await {
+        Ok(value) => Json(value).into_response(),
+        Err(err) => {
+            error!("whatsapp_channel_link error: {err:?}");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": err.to_string()})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn whatsapp_channel_logout(State(state): State<AppState>) -> impl IntoResponse {
+    match runtime_post_value(&state, "/internal/whatsapp/logout", &json!({})).await {
+        Ok(value) => Json(value).into_response(),
+        Err(err) => {
+            error!("whatsapp_channel_logout error: {err:?}");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": err.to_string()})),
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn send_message(
@@ -858,6 +930,36 @@ fn channel_transport<'a>(config: &'a Config, channel: &str) -> &'a str {
         "teams" => config.channels.teams.transport.as_str(),
         _ => "native",
     }
+}
+
+async fn runtime_value(state: &AppState, path: &str) -> anyhow::Result<serde_json::Value> {
+    let runtime_url = state
+        .config
+        .adapters
+        .runtime_url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("embedded adapter runtime url missing"))?;
+    adapters::runtime::get_json::<serde_json::Value>(&state.http, runtime_url, path).await
+}
+
+async fn runtime_post_value(
+    state: &AppState,
+    path: &str,
+    payload: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let runtime_url = state
+        .config
+        .adapters
+        .runtime_url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("embedded adapter runtime url missing"))?;
+    adapters::runtime::post_json::<serde_json::Value, serde_json::Value>(
+        &state.http,
+        runtime_url,
+        path,
+        payload,
+    )
+    .await
 }
 
 fn channel_webhook_path<'a>(config: &'a Config, channel: &str) -> &'a str {
