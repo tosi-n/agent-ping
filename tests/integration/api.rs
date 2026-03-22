@@ -35,6 +35,7 @@ fn create_test_config() -> Config {
         backend: BackendConfig {
             webhook_url: None,
             media_upload_url: None,
+            route_resolve_url: None,
             api_token: None,
         },
         session: SessionConfig {

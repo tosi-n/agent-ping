@@ -32,13 +32,17 @@ pub fn resolve_identity_link(
 
 pub fn build_session_key(
     cfg: &SessionConfig,
+    agent_id_override: Option<&str>,
     channel: &str,
     account_id: Option<&str>,
     peer_kind: &str,
     peer_id: &str,
     thread_id: Option<&str>,
 ) -> String {
-    let agent_id = cfg.agent_id.trim().to_lowercase();
+    let agent_id = agent_id_override
+        .map(normalize_token)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| cfg.agent_id.trim().to_lowercase());
     let main_key = cfg.main_key.trim().to_lowercase();
     let channel = normalize_token(channel);
     let peer_id = normalize_token(peer_id);
@@ -126,7 +130,7 @@ mod tests {
             main_key: "main".to_string(),
             identity_links: HashMap::new(),
         };
-        let key = build_session_key(&cfg, "slack", None, "dm", "U123", None);
+        let key = build_session_key(&cfg, None, "slack", None, "dm", "U123", None);
         assert_eq!(key, "agent:myagent:dm:u123");
     }
 
@@ -138,7 +142,7 @@ mod tests {
             main_key: "main".to_string(),
             identity_links: HashMap::new(),
         };
-        let key = build_session_key(&cfg, "telegram", None, "dm", "tg456", None);
+        let key = build_session_key(&cfg, None, "telegram", None, "dm", "tg456", None);
         assert_eq!(key, "agent:myagent:telegram:dm:tg456");
     }
 
@@ -150,7 +154,7 @@ mod tests {
             main_key: "main".to_string(),
             identity_links: HashMap::new(),
         };
-        let key = build_session_key(&cfg, "whatsapp", Some("biz123"), "dm", "wa789", None);
+        let key = build_session_key(&cfg, None, "whatsapp", Some("biz123"), "dm", "wa789", None);
         assert_eq!(key, "agent:myagent:whatsapp:biz123:dm:wa789");
     }
 
@@ -162,7 +166,7 @@ mod tests {
             main_key: "main".to_string(),
             identity_links: HashMap::new(),
         };
-        let key = build_session_key(&cfg, "slack", None, "dm", "U123", None);
+        let key = build_session_key(&cfg, None, "slack", None, "dm", "U123", None);
         assert_eq!(key, "agent:myagent:main");
     }
 
@@ -174,7 +178,7 @@ mod tests {
             main_key: "main".to_string(),
             identity_links: HashMap::new(),
         };
-        let key = build_session_key(&cfg, "slack", Some("C123"), "thread", "U456", Some("ts789"));
+        let key = build_session_key(&cfg, None, "slack", Some("C123"), "thread", "U456", Some("ts789"));
         assert_eq!(key, "agent:myagent:slack:thread:u456:thread:ts789");
     }
 
@@ -186,7 +190,7 @@ mod tests {
             main_key: "main".to_string(),
             identity_links: HashMap::new(),
         };
-        let key = build_session_key(&cfg, "slack", None, "thread", "U456", Some("   "));
+        let key = build_session_key(&cfg, None, "slack", None, "thread", "U456", Some("   "));
         assert_eq!(key, "agent:myagent:slack:thread:u456");
     }
 
@@ -198,7 +202,19 @@ mod tests {
             main_key: "Main".to_string(),
             identity_links: HashMap::new(),
         };
-        let key = build_session_key(&cfg, "  Slack  ", Some("  C123  "), "dm", "  U456  ", None);
+        let key = build_session_key(&cfg, None, "  Slack  ", Some("  C123  "), "dm", "  U456  ", None);
         assert_eq!(key, "agent:myagent:dm:u456");
+    }
+
+    #[test]
+    fn test_build_session_key_agent_override() {
+        let cfg = SessionConfig {
+            agent_id: "fallback".to_string(),
+            dm_scope: "per-peer".to_string(),
+            main_key: "main".to_string(),
+            identity_links: HashMap::new(),
+        };
+        let key = build_session_key(&cfg, Some("finance_main"), "slack", None, "dm", "U123", None);
+        assert_eq!(key, "agent:finance_main:dm:u123");
     }
 }

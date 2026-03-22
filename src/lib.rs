@@ -581,24 +581,37 @@ fn runtime_response_into_response(
 }
 
 async fn handle_inbound(state: AppState, mut inbound: InboundMessage) -> anyhow::Result<()> {
+    let binding = match resolve_backend_binding(&state, &inbound).await {
+        Ok(Some(binding)) => binding,
+        Ok(None) => resolve_binding(
+            &state.config.bindings,
+            &inbound.channel,
+            inbound.account_id.as_deref(),
+            Some(&inbound.peer_id),
+        ),
+        Err(err) => {
+            error!("backend route resolve error: {err:?}");
+            resolve_binding(
+                &state.config.bindings,
+                &inbound.channel,
+                inbound.account_id.as_deref(),
+                Some(&inbound.peer_id),
+            )
+        }
+    };
+    let resolved_agent_id = binding
+        .agent_id
+        .clone()
+        .unwrap_or_else(|| state.config.session.agent_id.clone());
     let session_key = session::build_session_key(
         &state.config.session,
+        Some(resolved_agent_id.as_str()),
         &inbound.channel,
         inbound.account_id.as_deref(),
         &inbound.peer_kind,
         &inbound.peer_id,
         inbound.thread_id.as_deref(),
     );
-
-    let binding = resolve_binding(
-        &state.config.bindings,
-        &inbound.channel,
-        inbound.account_id.as_deref(),
-        Some(&inbound.peer_id),
-    );
-    let agent_id = binding
-        .agent_id
-        .or(Some(state.config.session.agent_id.clone()));
 
     let last_route = serde_json::json!({
         "channel": inbound.channel,
@@ -610,7 +623,7 @@ async fn handle_inbound(state: AppState, mut inbound: InboundMessage) -> anyhow:
     let now = Utc::now();
     let session_record = db::SessionRecord {
         session_key: session_key.clone(),
-        agent_id: agent_id.unwrap_or_else(|| "main".to_string()),
+        agent_id: resolved_agent_id,
         business_profile_id: binding.business_profile_id,
         user_id: binding.user_id,
         last_route: Some(last_route),
@@ -970,6 +983,79 @@ fn channel_webhook_path<'a>(config: &'a Config, channel: &str) -> &'a str {
         "teams" => config.channels.teams.webhook_path.as_str(),
         _ => "/",
     }
+}
+
+fn backend_route_resolve_url(config: &config::BackendConfig) -> Option<String> {
+    if let Some(url) = config.route_resolve_url.as_ref() {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let webhook = config.webhook_url.as_ref()?.trim();
+    let suffix = "/api/v1/agent-ping/inbound";
+    if let Some(base) = webhook.strip_suffix(suffix) {
+        return Some(format!(
+            "{}/api/v1/agent-ping/internal/communication/resolve-route",
+            base
+        ));
+    }
+    None
+}
+
+async fn resolve_backend_binding(
+    state: &AppState,
+    inbound: &InboundMessage,
+) -> anyhow::Result<Option<BindingMatch>> {
+    let Some(url) = backend_route_resolve_url(&state.config.backend) else {
+        return Ok(None);
+    };
+
+    let mut request = state.http.post(url).json(&json!({
+        "channel": inbound.channel,
+        "account_id": inbound.account_id,
+        "peer_id": inbound.peer_id,
+        "thread_id": inbound.thread_id,
+    }));
+    if let Some(token) = state.config.backend.api_token.as_ref() {
+        request = request.header("X-Agent-Ping-Token", token);
+    }
+
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "route resolve failed with status {}",
+            response.status()
+        ));
+    }
+
+    let payload: serde_json::Value = response.json().await?;
+    let business_profile_id = payload
+        .get("business_profile_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let user_id = payload
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let agent_id = payload
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    if business_profile_id.is_none() && user_id.is_none() && agent_id.is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some(BindingMatch {
+        business_profile_id,
+        user_id,
+        agent_id,
+    }))
 }
 
 #[derive(Clone)]

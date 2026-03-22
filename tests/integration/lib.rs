@@ -497,6 +497,7 @@ fn test_config_backend_settings() {
         backend: BackendConfig {
             webhook_url: Some("https://backend.example.com/webhook".to_string()),
             media_upload_url: Some("https://backend.example.com/upload".to_string()),
+            route_resolve_url: None,
             api_token: Some("secret_token".to_string()),
         },
         ..Config::default()

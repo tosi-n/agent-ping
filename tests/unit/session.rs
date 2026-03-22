@@ -10,7 +10,7 @@ fn test_dm_main_scope() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:default");
 }
 
@@ -22,7 +22,7 @@ fn test_dm_per_peer_scope() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:dm:user123");
 }
 
@@ -34,7 +34,7 @@ fn test_dm_per_channel_peer_scope() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:slack:dm:user123");
 }
 
@@ -46,7 +46,7 @@ fn test_dm_per_account_channel_peer_scope() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "slack", Some("account1"), "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", Some("account1"), "dm", "user123", None);
     assert_eq!(key, "agent:myagent:slack:account1:dm:user123");
 }
 
@@ -58,7 +58,7 @@ fn test_channel_with_thread() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "slack", None, "channel", "C123", Some("thread1"));
+    let key = build_session_key(&cfg, None, "slack", None, "channel", "C123", Some("thread1"));
     assert_eq!(key, "agent:myagent:slack:channel:c123:thread:thread1");
 }
 
@@ -70,7 +70,7 @@ fn test_channel_without_thread() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "telegram", None, "channel", "C456", None);
+    let key = build_session_key(&cfg, None, "telegram", None, "channel", "C456", None);
     assert_eq!(key, "agent:myagent:telegram:channel:c456");
 }
 
@@ -82,7 +82,7 @@ fn test_group_peer_kind() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "telegram", None, "group", "-123456", None);
+    let key = build_session_key(&cfg, None, "telegram", None, "group", "-123456", None);
     assert_eq!(key, "agent:myagent:telegram:group:-123456");
 }
 
@@ -94,7 +94,7 @@ fn test_empty_thread_id_is_ignored() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "slack", None, "channel", "C123", Some(""));
+    let key = build_session_key(&cfg, None, "slack", None, "channel", "C123", Some(""));
     assert_eq!(key, "agent:myagent:slack:channel:c123");
 }
 
@@ -106,7 +106,7 @@ fn test_case_normalization() {
         main_key: "Default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "Slack", None, "dm", "User123", None);
+    let key = build_session_key(&cfg, None, "Slack", None, "dm", "User123", None);
     assert_eq!(key, "agent:myagent:default");
 }
 
@@ -118,7 +118,7 @@ fn test_whitespace_trimming() {
         main_key: "  default  ".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "  slack  ", None, "dm", "  user123  ", None);
+    let key = build_session_key(&cfg, None, "  slack  ", None, "dm", "  user123  ", None);
     assert_eq!(key, "agent:myagent:default");
 }
 
@@ -134,7 +134,7 @@ fn test_identity_links_direct_match() {
         identity_links: links,
     };
 
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:dm:canonical");
 }
 
@@ -150,7 +150,7 @@ fn test_identity_links_scoped_match() {
         identity_links: links,
     };
 
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:dm:canonical");
 }
 
@@ -169,7 +169,7 @@ fn test_identity_links_with_non_empty_dm_scope() {
         identity_links: links,
     };
 
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:slack:dm:canonical");
 }
 
@@ -185,7 +185,7 @@ fn test_no_identity_link_match() {
         identity_links: links,
     };
 
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:dm:user123");
 }
 
@@ -208,7 +208,7 @@ fn test_multiple_identity_link_values() {
         identity_links: links,
     };
 
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:dm:canonical");
 }
 
@@ -264,7 +264,7 @@ fn test_default_account_id_when_none() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "slack", None, "dm", "user123", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "user123", None);
     assert_eq!(key, "agent:myagent:slack:default:dm:user123");
 }
 
@@ -276,7 +276,7 @@ fn test_whatsapp_channel() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "whatsapp", None, "dm", "+1234567890", None);
+    let key = build_session_key(&cfg, None, "whatsapp", None, "dm", "+1234567890", None);
     assert_eq!(key, "agent:myagent:default");
 }
 
@@ -288,6 +288,6 @@ fn test_special_characters_in_peer_id() {
         main_key: "default".to_string(),
         identity_links: HashMap::new(),
     };
-    let key = build_session_key(&cfg, "slack", None, "dm", "U123_abc-xyz", None);
+    let key = build_session_key(&cfg, None, "slack", None, "dm", "U123_abc-xyz", None);
     assert_eq!(key, "agent:myagent:default");
 }

@@ -47,6 +47,7 @@ impl Default for DatabaseConfig {
 pub struct BackendConfig {
     pub webhook_url: Option<String>,
     pub media_upload_url: Option<String>,
+    pub route_resolve_url: Option<String>,
     pub api_token: Option<String>,
 }
 
@@ -55,6 +56,7 @@ impl Default for BackendConfig {
         Self {
             webhook_url: None,
             media_upload_url: None,
+            route_resolve_url: None,
             api_token: None,
         }
     }
@@ -249,6 +251,7 @@ impl Default for Config {
             backend: BackendConfig {
                 webhook_url: None,
                 media_upload_url: None,
+                route_resolve_url: None,
                 api_token: None,
             },
             session: SessionConfig {
@@ -350,6 +353,12 @@ pub fn load_config() -> Config {
     if let Ok(url) = env::var("AGENT_PING_BACKEND_MEDIA_UPLOAD_URL") {
         if !url.trim().is_empty() {
             cfg.backend.media_upload_url = Some(url);
+        }
+    }
+
+    if let Ok(url) = env::var("AGENT_PING_BACKEND_ROUTE_RESOLVE_URL") {
+        if !url.trim().is_empty() {
+            cfg.backend.route_resolve_url = Some(url);
         }
     }
 
@@ -631,6 +640,7 @@ mod tests {
         let backend = BackendConfig::default();
         assert!(backend.webhook_url.is_none());
         assert!(backend.media_upload_url.is_none());
+        assert!(backend.route_resolve_url.is_none());
         assert!(backend.api_token.is_none());
     }
 
