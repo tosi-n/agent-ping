@@ -135,6 +135,7 @@ pub async fn create_app() -> anyhow::Result<(AppState, Router)> {
         .route("/v1/sessions/:session_key", get(get_session))
         .route("/v1/sessions/:session_key/messages", get(list_messages))
         .route("/v1/runtime/inbound", post(runtime_inbound))
+        .route("/v1/channels/identities", get(channel_identities))
         .route("/v1/channels/whatsapp/status", get(whatsapp_channel_status))
         .route("/v1/channels/whatsapp/link", post(whatsapp_channel_link))
         .route("/v1/channels/whatsapp/logout", post(whatsapp_channel_logout))
@@ -231,6 +232,20 @@ async fn whatsapp_channel_status(State(state): State<AppState>) -> impl IntoResp
         Ok(value) => Json(value).into_response(),
         Err(err) => {
             error!("whatsapp_channel_status error: {err:?}");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": err.to_string()})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn channel_identities(State(state): State<AppState>) -> impl IntoResponse {
+    match runtime_value(&state, "/internal/identities").await {
+        Ok(value) => Json(value).into_response(),
+        Err(err) => {
+            error!("channel_identities error: {err:?}");
             (
                 StatusCode::BAD_GATEWAY,
                 Json(json!({"error": err.to_string()})),
@@ -1017,6 +1032,7 @@ async fn resolve_backend_binding(
         "account_id": inbound.account_id,
         "peer_id": inbound.peer_id,
         "thread_id": inbound.thread_id,
+        "text": inbound.text,
     }));
     if let Some(token) = state.config.backend.api_token.as_ref() {
         request = request.header("X-Agent-Ping-Token", token);

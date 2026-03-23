@@ -49,7 +49,12 @@ jobs:
         run: |
           mkdir -p ./coverage/json
           cargo tarpaulin --tests --out Json --output-dir ./coverage/json -- --test-threads=1 >/dev/null
-          COVERAGE=$(jq -r '.metrics.total_covered_percent' ./coverage/json/tarpaulin-report.json)
+          COVERAGE=$(jq -r '.coverage // empty' ./coverage/json/tarpaulin-report.json)
+          if [ -z "$COVERAGE" ] || [ "$COVERAGE" = "null" ]; then
+            echo "Coverage report missing numeric .coverage field"
+            cat ./coverage/json/tarpaulin-report.json
+            exit 1
+          fi
           echo "Coverage: $COVERAGE%"
           THRESHOLD=15
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
